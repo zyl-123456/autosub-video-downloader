@@ -16,6 +16,9 @@
 !/server.js
 !/start.bat
 !/start.vbs
+!/tray.vbs
+!/tray.ps1
+!/tray-icon32.png
 !/transcribe_video.py
 !/docs/
 !/extension/
