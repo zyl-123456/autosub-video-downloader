@@ -109,6 +109,23 @@ function parseProgress(line) {
   return null;
 }
 
+// 按站点挑 Cookie 文件：B站/YouTube 各用各的，互不干扰；
+// 都没有时兜底用通用 cookies.txt（Netscape 格式可含多域名条目，yt-dlp 按域名自动取用）
+function pickCookieArgs(url) {
+  const u = (url || '').toLowerCase();
+  const isBili = u.includes('bilibili.com') || u.includes('b23.tv');
+  const isYt = u.includes('youtube.com') || u.includes('youtu.be');
+  const cands = [];
+  if (isBili) cands.push('cookies-bilibili.txt');
+  if (isYt) cands.push('cookies-youtube.txt');
+  cands.push('cookies.txt');
+  for (const name of cands) {
+    const p = path.join(BASE, name);
+    if (fs.existsSync(p)) return ['--cookies', p];
+  }
+  return null;
+}
+
 function startDownload(task) {
   const args = [];
   if (CFG.proxy) args.push('--proxy', CFG.proxy);
@@ -126,15 +143,11 @@ function startDownload(task) {
     '--embed-subs',
   );
 
-  // YouTube 需要登录态 Cookie，否则可能被判机器人拦截。
-  // 优先用工作目录里的 cookies.txt（浏览器扩展导出）；
-  // 也可在 config.json 里配 cookiesFromBrowser: "chrome"/"edge"。
-  const cookieFile = path.join(BASE, 'cookies.txt');
-  if (fs.existsSync(cookieFile)) {
-    args.push('--cookies', cookieFile);
-  } else if (CFG.cookiesFromBrowser) {
-    args.push('--cookies-from-browser', CFG.cookiesFromBrowser);
-  }
+  // Cookie 按站点自动挑：B站用 cookies-bilibili.txt，YouTube 用 cookies-youtube.txt，
+  // 兜底通用 cookies.txt；都没有时用 config.json 的 cookiesFromBrowser。
+  const cookieArgs = pickCookieArgs(task.url) ||
+    (CFG.cookiesFromBrowser ? ['--cookies-from-browser', CFG.cookiesFromBrowser] : null);
+  if (cookieArgs) args.push(...cookieArgs);
 
   args.push(task.url);
 
