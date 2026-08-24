@@ -102,7 +102,7 @@ $miExit.add_Click({
     if ($script:serverProc -and -not $script:serverProc.HasExited) {
         Stop-Process -Id $script:serverProc.Id -Force -ErrorAction SilentlyContinue
     }
-    [System.Windows.Forms.Application]::Exit()
+    [System.Windows.Forms.Application]::ExitThread()
 })
 $menu.Items.Add($miExit) | Out-Null
 
@@ -112,8 +112,9 @@ $notify.add_Click({ Open-Ui })
 
 $notify.ShowBalloonTip(2000, 'Autosub Video Downloader', "Running in background - UI: $UiUrl", 'Info')
 
-# ---- message loop ----
-[System.Windows.Forms.Application]::Run($notify)
+# ---- message loop (keep resident until Application::Exit from menu) ----
+$ctx = New-Object System.Windows.Forms.ApplicationContext
+[System.Windows.Forms.Application]::Run($ctx)
 
 # cleanup
 $bmp.Dispose(); $icon.Dispose(); $notify.Dispose()
