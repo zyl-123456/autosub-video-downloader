@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>视频下载器 · yt-dlp</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --line: #e6e8eb; --text: #1f2329;
+    --muted: #8a9099; --accent: #2f7cf6; --accent-soft: #eaf2ff;
+    --green: #18a058; --red: #e54848; --orange: #f0a020;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Segoe UI, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; margin-bottom: 18px;
+  }
+  textarea {
+    width: 100%; min-height: 110px; resize: vertical; border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 12px; font-size: 13px; font-family: inherit;
+    outline: none; line-height: 1.6;
+  }
+  textarea:focus { border-color: var(--accent); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  button {
+    border: none; border-radius: 8px; padding: 9px 18px; font-size: 14px;
+    cursor: pointer; font-family: inherit; transition: .15s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #1f6ae0; }
+  .btn-ghost { background: var(--accent-soft); color: var(--accent); }
+  .btn-ghost:hover { background: #dcebff; }
+  .btn-line { background: #fff; border: 1px solid var(--line); color: var(--text); }
+  .btn-line:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .list-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .list-head h2 { font-size: 15px; margin: 0; }
+  .count { color: var(--muted); font-size: 13px; }
+  .item { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .item-top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+  .url { word-break: break-all; font-size: 13px; line-height: 1.5; }
+  .title { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .badge { font-size: 12px; padding: 2px 9px; border-radius: 20px; white-space: nowrap; }
+  .b-queued { background: #f0f1f3; color: var(--muted); }
+  .b-downloading { background: var(--accent-soft); color: var(--accent); }
+  .b-done { background: #e7f7ee; color: var(--green); }
+  .b-error { background: #fdeaea; color: var(--red); }
+  .b-canceled { background: #fbf0e0; color: var(--orange); }
+  .bar { height: 8px; background: #eef0f3; border-radius: 20px; margin-top: 10px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 20px; transition: width .3s; }
+  .bar.done > i { background: var(--green); }
+  .meta { display: flex; gap: 14px; color: var(--muted); font-size: 12px; margin-top: 7px; flex-wrap: wrap; }
+  .empty { color: var(--muted); text-align: center; padding: 30px 0; font-size: 13px; }
+  .cancel-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 6px; }
+  .cancel-x:hover { color: var(--red); }
+  .proxy-note { font-size: 12px; color: var(--orange); margin-top: 8px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
+  code { background: #f0f1f3; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📥 视频下载器</h1>
+  <div class="sub">基于 yt-dlp · 自动下载中文字幕 · 视频保存到 <code id="saveDir">…</code></div>
+
+  <div class="panel">
+    <textarea id="urls" placeholder="在此粘贴视频链接，每行一个（支持 B站 / YouTube 等）&#10;例如：&#10;https://www.bilibili.com/video/BV1xx411c7mZ&#10;https://www.youtube.com/watch?v=xxxx"></textarea>
+    <div class="hint">支持批量：粘贴多个链接，点击「添加并下载」会依次下载，单条失败不影响其余。下载完成后若没有中文字幕，会自动用本地 Whisper 模型离线转写生成。</div>
+    <div class="proxy-note" id="proxyNote" style="display:none">⚠ 当前已配置代理，若视频站点无法访问请检查代理软件是否开启（config.json: proxy）。</div>
+    <div class="row">
+      <button class="btn-primary" id="addBtn">添加并下载</button>
+      <button class="btn-ghost" id="clearBtn">清空输入框</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="list-head">
+      <h2>下载列表</h2>
+      <span class="count" id="count">0 个任务</span>
+    </div>
+    <div id="list">
+      <div class="empty">暂无任务，在上方添加链接开始下载。</div>
+    </div>
+    <div class="row" id="batchRow" style="display:none">
+      <button class="btn-line btn-sm" id="clearDone">清除已完成</button>
+      <button class="btn-line btn-sm" id="cancelAll">取消全部</button>
+    </div>
+  </div>
+
+  <footer>本地应用 · 数据不出本机 · 后端 server.js 调用本地 yt-dlp 与 faster-whisper</footer>
+</div>
+
+<script>
+  const tasks = new Map(); // id -> dom data
+
+  // 启动时读一次服务端配置（保存目录 / 是否配置了代理）
+  fetch('/api/config').then(r => r.json()).then(cfg => {
+    if (cfg.ok) {
+      document.getElementById('saveDir').textContent = cfg.saveDir;
+      if (cfg.hasProxy) document.getElementById('proxyNote').style.display = 'block';
+    }
+  }).catch(() => {});
+
+  function statusBadge(s) {
+    const map = {
+      queued: ['排队中', 'b-queued'],
+      downloading: ['下载中', 'b-downloading'],
+      transcribing: ['生成字幕中', 'b-downloading'],
+      done: ['已完成', 'b-done'],
+      error: ['失败', 'b-error'],
+      canceled: ['已取消', 'b-canceled']
+    };
+    const [txt, cls] = map[s] || [s, 'b-queued'];
+    return `<span class="badge ${cls}">${txt}</span>`;
+  }
+
+  function render() {
+    const list = document.getElementById('list');
+    const ids = [...tasks.keys()];
+    document.getElementById('count').textContent = `${ids.length} 个任务`;
+    document.getElementById('batchRow').style.display = ids.length ? 'flex' : 'none';
+    if (!ids.length) {
+      list.innerHTML = '<div class="empty">暂无任务，在上方添加链接开始下载。</div>';
+      return;
+    }
+    list.innerHTML = ids.map(id => {
+      const t = tasks.get(id);
+      const showBar = (t.status === 'downloading' || t.status === 'done' || t.status === 'transcribing');
+      const barCls = (t.status === 'done') ? 'bar done' : 'bar';
+      const pct = t.percent != null ? t.percent : 0;
+      const meta = [];
+      if (t.size) meta.push('大小 ' + t.size);
+      if (t.speed) meta.push('速度 ' + t.speed);
+      if (t.eta && t.status === 'downloading') meta.push('剩余 ' + t.eta);
+      if (t.status === 'transcribing') meta.push('离线语音转文字（本地 Whisper，不上传）');
+      if (t.filename) {
+        // 只显示文件名（截掉目录路径），避免长路径刷屏
+        const shortName = t.filename.split(/[\\/]/).pop();
+        meta.push('文件 ' + shortName);
+      }
+      if (t.subtitle) {
+        const subName = t.subtitle.split(/[\\/]/).pop();
+        meta.push('字幕 ' + subName);
+      }
+      const errLine = t.status === 'error' && t.lastError ? `<div class="title" style="color:var(--red)">${escapeHtml(t.lastError)}</div>` : '';
+      const cancelBtn = (t.status === 'downloading' || t.status === 'queued' || t.status === 'transcribing')
+        ? `<button class="cancel-x" data-cancel="${id}">取消</button>` : '';
+      const openBtns = t.status === 'done'
+        ? `<button class="btn-line btn-sm" data-play="${id}">▶ 播放</button>
+           <button class="btn-line btn-sm" data-folder="${id}">📂 文件夹</button>` : '';
+      // 字幕相关按钮：
+      // - 离线生成的字幕任务完成后，提供"📝 字幕"按钮打开 srt
+      // - 普通视频下载完成、但还没有任何中文字幕时，提供"🎙 生成字幕"按钮触发离线转写
+      let subBtns = '';
+      if (t.status === 'done' && t.kind === 'transcribe' && t.subtitle) {
+        subBtns = `<button class="btn-line btn-sm" data-sub="${id}">📝 字幕</button>`;
+      } else if (t.status === 'done' && t.kind !== 'transcribe' && !t.hasSub) {
+        // 该视频还没有任何中文字幕（hasSub 由服务端探测磁盘得到），提供离线生成按钮
+        subBtns = `<button class="btn-ghost btn-sm" data-transcribe="${id}">🎙 生成字幕</button>`;
+      }
+      return `<div class="item">
+        <div class="item-top">
+          <div style="flex:1">
+            <div class="url">${escapeHtml(t.url)}</div>
+            ${t.titleTxt ? `<div class="title">${escapeHtml(t.titleTxt)}</div>` : ''}
+            ${errLine}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            ${statusBadge(t.status)}
+            ${openBtns}
+            ${subBtns}
+            ${cancelBtn}
+          </div>
+        </div>
+        ${showBar ? `<div class="${barCls}"><i style="width:${pct}%"></i></div>` : ''}
+        ${meta.length ? `<div class="meta">${meta.map(m => `<span>${escapeHtml(m)}</span>`).join('')}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    document.querySelectorAll('[data-cancel]').forEach(b => {
+      b.onclick = () => cancelTask(b.getAttribute('data-cancel'));
+    });
+    document.querySelectorAll('[data-play]').forEach(b => {
+      b.onclick = () => openTask(b.getAttribute('data-play'), 'file');
+    });
+    document.querySelectorAll('[data-folder]').forEach(b => {
+      b.onclick = () => openTask(b.getAttribute('data-folder'), 'folder');
+    });
+    document.querySelectorAll('[data-sub]').forEach(b => {
+      b.onclick = () => openSub(b.getAttribute('data-sub'));
+    });
+    document.querySelectorAll('[data-transcribe]').forEach(b => {
+      b.onclick = () => transcribeTask(b.getAttribute('data-transcribe'));
+    });
+  }
+
+  // 打开离线生成的字幕文件（srt）
+  async function openSub(id) {
+    try {
+      const task = tasks.get(parseInt(id, 10));
+      const url = task ? task.url : '';
+      const resp = await fetch('/open', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, mode: 'file', url })
+      });
+      const r = await resp.json();
+      if (!r.ok) alert('操作失败：' + (r.error || '未知错误'));
+    } catch (err) {
+      alert('请求失败：' + err.message);
+    }
+  }
+
+  // 触发离线语音转文字：把该视频的音频转成中文字幕
+  async function transcribeTask(id) {
+    const btn = document.querySelector(`[data-transcribe="${id}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+    try {
+      const task = tasks.get(parseInt(id, 10));
+      const url = task ? task.url : '';
+      const resp = await fetch('/transcribe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, url })
+      });
+      const r = await resp.json();
+      if (!r.ok) alert('生成字幕失败：' + (r.error || '未知错误'));
+      // 成功的话，新的转写任务会经 SSE 推回，自动出现一条"生成字幕中"的任务
+    } catch (err) {
+      alert('请求失败：' + err.message);
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // SSE 实时进度
+  const es = new EventSource('/events');
+  es.addEventListener('task', e => {
+    const t = JSON.parse(e.data);
+    // 标题从 filename 里取（去掉扩展名和 [id]）
+    if (t.filename && !tasks.get(t.id)?.titleTxt) {
+      t.titleTxt = t.filename.replace(/\s*\[[^\]]*\]\.[^.]+$/, '');
+    }
+    tasks.set(t.id, { ...(tasks.get(t.id) || {}), ...t });
+    render();
+  });
+
+  async function addTasks() {
+    const ta = document.getElementById('urls');
+    const raw = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!raw.length) { alert('请先粘贴至少一个链接'); return; }
+    const btn = document.getElementById('addBtn');
+    btn.disabled = true;
+    try {
+      const resp = await fetch('/add', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: raw })
+      });
+      const r = await resp.json();
+      if (r.ok) ta.value = '';
+    } catch (err) {
+      alert('提交失败：' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function cancelTask(id) {
+    await fetch('/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+  }
+
+  async function openTask(id, mode) {
+    try {
+      // 把当前任务的 URL 一并发过去——万一 id 在服务端已被清（比如服务重启过），
+      // 服务端可以按 URL 在历史记录里找回这次下载的文件
+      const task = tasks.get(parseInt(id, 10));
+      const url = task ? task.url : '';
+      const resp = await fetch('/open', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, mode, url })
+      });
+      const r = await resp.json();
+      if (!r.ok) alert('操作失败：' + (r.error || '未知错误'));
+    } catch (err) {
+      alert('请求失败：' + err.message);
+    }
+  }
+
+  document.getElementById('addBtn').onclick = addTasks;
+  document.getElementById('clearBtn').onclick = () => document.getElementById('urls').value = '';
+  document.getElementById('clearDone').onclick = () => {
+    for (const [id, t] of tasks) if (t.status === 'done') tasks.delete(id);
+    render();
+  };
+  document.getElementById('cancelAll').onclick = async () => {
+    for (const [id, t] of tasks) if (t.status === 'downloading' || t.status === 'queued') await cancelTask(id);
+  };
+
+  render();
+</script>
+</body>
+</html>

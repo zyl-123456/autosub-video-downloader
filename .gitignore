@@ -1,0 +1,35 @@
+# 一切本地配置与私密文件不入库
+config.json
+cookies.txt
+
+# 运行时产物
+*.log
+.task-log.json
+_run_server.cmd
+
+# 下载的视频与字幕（按标题自动建文件夹）
+/*/
+
+# 大二进制不进仓库，用户按 README 自行下载
+yt-dlp.exe
+yt-dlp
+youtube-dl.exe
+node.exe
+ffmpeg/
+*.mp4
+*.mkv
+*.webm
+*.flv
+*.mov
+*.m4a
+*.mp3
+*.wav
+*.part
+*.ytdl
+*.srt
+*.vtt
+
+# 系统杂物
+Thumbs.db
+Desktop.ini
+.DS_Store
