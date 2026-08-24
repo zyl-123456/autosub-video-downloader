@@ -421,6 +421,23 @@ async function videoMeta(vidPath, baseName, dirName, hasSub) {
   };
 }
 
+// 中文字幕判定：文件语言码里含 zh（如 zh / zh-Hans / zh-CN / ai-zh / zh-Hans-zh / zh-Hant-zh 等）
+// yt-dlp 下载的机翻字幕常见 xxx.zh-Hans-zh.srt，这类后缀不能漏判
+function isChineseSub(baseName, f) {
+  if (!/\.(srt|vtt)$/i.test(f)) return false;
+  const n = f.replace(/\.(srt|vtt)$/i, '');
+  if (!n.startsWith(baseName + '.')) return false;
+  const lang = n.slice(baseName.length + 1).toLowerCase();
+  return lang.includes('zh') || lang === 'chi';
+}
+// 给定视频文件路径，扫描同目录下是否有同名中文字幕
+function hasChineseSubForFile(videoPath) {
+  const base = path.basename(videoPath).replace(/\.[^.]+$/, '');
+  let files = [];
+  try { files = fs.readdirSync(path.dirname(videoPath)); } catch (e) { return false; }
+  return files.some(f => isChineseSub(base, f));
+}
+
 // 把任务状态广播给所有 SSE 连接
 const sseClients = new Set();
 function broadcast(task) {
@@ -433,10 +450,7 @@ function sanitize(t) {
   // 对已完成视频任务，检测旁边是否已有中文字幕（YouTube 字幕或离线转写产物）
   let hasSub = false;
   if (t.filename && /\.(webm|mp4|mkv)$/i.test(t.filename)) {
-    const base = t.filename.replace(/\.[^.]+$/, '');
-    hasSub = fs.existsSync(base + '.zh.srt') ||
-             fs.existsSync(base + '.zh-Hans.srt') ||
-             fs.existsSync(base + '.zh-CN.srt');
+    hasSub = hasChineseSubForFile(t.filename);
   }
   return {
     id: t.id, url: t.url, status: t.status, percent: t.percent,
@@ -472,12 +486,8 @@ const server = http.createServer((req, res) => {
         if (!vid) continue;
         const vidPath = path.join(dir, vid);
         const baseName = vid.replace(/\.[^.]+$/, '');
-        // 字幕检测：精确匹配同名前缀的中文字幕文件（zh/zh-Hans/zh-CN/ai-zh）
-        const hasSub = files.some(f => {
-          if (!/\.srt$/i.test(f)) return false;
-          const n = f.replace(/\.srt$/i, '');
-          return n.startsWith(baseName + '.') && /^(zh|zh-Hans|zh-CN|ai-zh)$/i.test(n.slice(baseName.length + 1));
-        });
+        // 字幕检测：精确匹配同名前缀的中文字幕文件（zh/zh-Hans/zh-CN/ai-zh/zh-Hans-zh 等）
+        const hasSub = files.some(f => isChineseSub(baseName, f));
         items.push(await videoMeta(vidPath, baseName, d.name, hasSub));
       }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
