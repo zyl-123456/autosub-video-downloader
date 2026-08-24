@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Autosub Downloader · 一键下载",
+  "version": "1.0.0",
+  "description": "把当前页面的视频发送到本地 Autosub Video Downloader 下载（支持 1752+ 站点，自动生成中文字幕）",
+  "permissions": ["activeTab", "contextMenus"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "发送到本地下载器",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

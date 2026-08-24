@@ -95,6 +95,18 @@ Netscape 格式的 cookie 每行都带域名字段，yt-dlp 会自动只把对�
 
 打开 `http://127.0.0.1:8731`，粘贴链接，下载。就这样。
 
+## 🧩 浏览器扩展（推荐：一键下载）
+
+不想复制粘贴链接？装上配套的 Chrome 扩展，在任何视频页面**点一下扩展图标**就把当前页视频送进下载队列。
+
+1. Chrome 打开 `chrome://extensions`，右上角开启「**开发者模式**」
+2. 点「**加载已解压的扩展程序**」，选择本项目的 **`extension/`** 文件夹
+3. 完事。在任意视频页面（B 站 / YouTube / 抖音…）点击扩展图标 📥 → 「发送并下载」
+
+- 也支持**右键菜单**：在页面或链接上右键 → 「📥 下载此页面视频（本地下载器）」
+- 前提：本地服务在运行（`start.vbs`）；扩展弹出窗里有直达下载管理界面的链接
+- Edge 同样适用（Edge 也是 Chromium 内核，扩展页开开发者模式后同样加载）
+
 ## 🍎 macOS / Linux
 
 ```bash
@@ -113,7 +125,8 @@ node server.js
 ├── transcribe_video.py  # 离线转写脚本：ffmpeg 抽音频 → faster-whisper → SRT
 ├── config.example.json  # 配置模板（复制为 config.json 使用）
 ├── start.vbs / start.bat# Windows 启动器
-└── docs/                # 截图等文档资源
+├── extension/            # Chrome/Edge 浏览器扩展（一键下载当前页视频）
+└── docs/                 # 截图等文档资源
 ```
 
 ## ⚙️ 工作原理

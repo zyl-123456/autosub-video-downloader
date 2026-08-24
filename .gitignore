@@ -18,6 +18,7 @@
 !/start.vbs
 !/transcribe_video.py
 !/docs/
+!/extension/
 
 # docs 内忽略编辑器杂物
 Thumbs.db

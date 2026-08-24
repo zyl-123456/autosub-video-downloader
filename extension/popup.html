@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 300px; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Segoe UI, sans-serif;
+    background: #f5f6f8; color: #1f2329; font-size: 13px;
+  }
+  .head {
+    padding: 14px 16px 10px; border-bottom: 1px solid #e6e8eb;
+    display: flex; align-items: center; gap: 8px; background: #fff;
+  }
+  .head .logo { font-size: 17px; }
+  .head .title { font-weight: 600; font-size: 14px; }
+  .body { padding: 14px 16px; }
+  .url-box {
+    background: #fff; border: 1px solid #e6e8eb; border-radius: 8px;
+    padding: 8px 10px; word-break: break-all; color: #8a9099;
+    font-size: 12px; line-height: 1.5; max-height: 72px; overflow: auto;
+  }
+  button {
+    width: 100%; margin-top: 12px; border: none; border-radius: 8px;
+    padding: 10px; font-size: 14px; cursor: pointer; font-family: inherit;
+    background: #2f7cf6; color: #fff; transition: .15s;
+  }
+  button:hover { background: #1f6ae0; }
+  button:disabled { background: #a8c6f5; cursor: default; }
+  button.ok { background: #18a058; }
+  .status { margin-top: 10px; font-size: 12px; text-align: center; min-height: 18px; }
+  .status.err { color: #e54848; }
+  .status.ok { color: #18a058; }
+  .hint { margin-top: 10px; color: #8a9099; font-size: 11px; line-height: 1.6; }
+  .hint a { color: #2f7cf6; text-decoration: none; }
+  .open-ui {
+    display: block; text-align: center; margin-top: 8px; padding: 7px;
+    border: 1px solid #e6e8eb; border-radius: 8px; background: #fff;
+    color: #1f2329; font-size: 12px; text-decoration: none;
+  }
+  .open-ui:hover { border-color: #2f7cf6; color: #2f7cf6; }
+</style>
+</head>
+<body>
+  <div class="head"><span class="logo">📥</span><span class="title">发送到本地下载器</span></div>
+  <div class="body">
+    <div class="url-box" id="url">读取当前页面…</div>
+    <button id="send">⬇ 发送并下载</button>
+    <div class="status" id="status"></div>
+    <a class="open-ui" id="openUI" href="http://127.0.0.1:8731" target="_blank">打开下载管理界面 →</a>
+    <div class="hint" id="hint">首次使用需先启动本地服务（start.vbs）。若失败请检查服务是否在运行。</div>
+  </div>
+<script src="popup.js"></script>
+</body>
+</html>
