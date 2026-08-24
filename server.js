@@ -1,67 +1,24 @@
 /**
- * 本地视频下载服务（yt-dlp Web UI）
- * ------------------------------------------------
- * 功能：
- *  - 接收前端 POST 的链接列表，为每条链接启动一个 yt-dlp 进程
- *  - 解析 yt-dlp 的进度输出（百分比/速度/ETA），通过 SSE 实时推回前端
- *  - 每条视频自动存入同名文件夹（视频 + 字幕）
- *  - 下载完成后自动检测中文字幕：缺失则调用本地 Whisper（faster-whisper）
- *    离线转写音频，生成简体中文字幕（SRT），全程无需手动干预
- *
- * 所有个性化配置见 config.json（参考 config.example.json）：
- *  port / proxy / downloadDir / python / whisperModel / language / cookiesFromBrowser
+ * yt-dlp 本地下载服务
+ * 作用：在网页和本机 yt-dlp.exe 之间搭桥
+ *  - 接收前端 POST 的链接列表
+ *  - 为每条链接启动一个 yt-dlp 进程（走 7897 代理 + 同目录 ffmpeg 合并）
+ *  - 解析 yt-dlp 的进度输出（百分比 / 速度 / ETA），通过 SSE 实时推回前端
  */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-// ---------------------------------------------------------------------------
-// 配置加载：config.json（不入库）→ 缺省值兜底
-// ---------------------------------------------------------------------------
-const BASE = __dirname;
-const DEFAULT_CFG = {
-  port: 8731,
-  proxy: '',                 // 形如 http://127.0.0.1:7897；留空则不走代理
-  downloadDir: '',           // 视频保存目录；留空 = 本项目目录
-  python: 'python',          // 装有 faster-whisper 的 Python 解释器（字幕转写用）
-  whisperModel: '',          // 本地 Whisper 模型目录；留空 = 首次运行自动从 HuggingFace 下载 large-v3
-  language: 'zh',            // 字幕语言（转写 + 下载字幕优先语言）
-  cookiesFromBrowser: ''     // 形如 "chrome" / "edge"；一般优先用 cookies.txt
-};
-const CFG = loadConfig();
-function loadConfig() {
-  const cfg = { ...DEFAULT_CFG };
-  try {
-    Object.assign(cfg, JSON.parse(fs.readFileSync(path.join(BASE, 'config.json'), 'utf8')));
-  } catch (e) { /* 无 config.json 时用缺省值 */ }
-  return cfg;
-}
-
-const PORT = CFG.port;
-const OUT_DIR = CFG.downloadDir ? path.resolve(BASE, CFG.downloadDir) : BASE;
-
-// yt-dlp 可执行文件：优先用本项目目录里的，其次用 PATH 里的
-function findYtDlp() {
-  const local = path.join(BASE, 'yt-dlp.exe');
-  if (fs.existsSync(local)) return local;
-  const localUnix = path.join(BASE, 'yt-dlp');
-  if (fs.existsSync(localUnix)) return localUnix;
-  return 'yt-dlp'; // 交给 PATH
-}
-const YTDL = findYtDlp();
-
-// ffmpeg：优先用本项目 ffmpeg/bin，其次交给 PATH（yt-dlp 自己找）
-function findFfmpegDir() {
-  const dir = path.join(BASE, 'ffmpeg', 'bin');
-  if (fs.existsSync(path.join(dir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'))) return dir;
-  return '';
-}
-const FFMPEG = findFfmpegDir();
-
-// 转写用的 Python 解释器与模型（server → python 通过环境变量传递）
-const LISTEN_PY = CFG.python;
-const TRANSCRIBE_SCRIPT = path.join(BASE, 'transcribe_video.py');
+const PORT = 8731;
+const BASE = __dirname;                       // D:\000-me-work\video-downloading
+const YTDL = path.join(BASE, 'yt-dlp.exe');
+const FFMPEG = path.join(BASE, 'ffmpeg', 'bin');
+const PROXY = 'http://127.0.0.1:7897';
+const OUT_DIR = path.join(BASE, 'downloaded videos');  // 媒体库：视频统一存这里
+const THUMB_DIR = path.join(OUT_DIR, '.thumbs');       // 封面缩略图缓存
+fs.mkdirSync(OUT_DIR, { recursive: true });
+fs.mkdirSync(THUMB_DIR, { recursive: true });
 
 // 简易任务表：id -> {url, proc, status, percent, ...}
 const tasks = new Map();
@@ -69,7 +26,7 @@ let taskSeq = 0;
 
 // 持久化任务日志：服务重启也能找回已完成任务的 filename，
 // 避免点"打开/文件夹"报"task not done or no file"
-const taskLogPath = path.join(OUT_DIR, '.task-log.json');
+const taskLogPath = path.join(BASE, '.task-log.json');
 let persistedTasks = (() => {
   try {
     const arr = JSON.parse(fs.readFileSync(taskLogPath, 'utf8'));
@@ -136,29 +93,35 @@ function buildCookiePool() {
 }
 
 function startDownload(task) {
-  const args = [];
-  if (CFG.proxy) args.push('--proxy', CFG.proxy);
-  if (FFMPEG) args.push('--ffmpeg-location', FFMPEG);
-  args.push(
+  const args = [
+    '--proxy', PROXY,
+    '--ffmpeg-location', FFMPEG,
     '-P', OUT_DIR,
     '-o', '%(title)s/%(title)s [%(id)s].%(ext)s',   // 每条视频自动建同名文件夹，视频+字幕都存里面
     '--newline',
     '--no-playlist',          // 单条链接默认不下整个列表，避免误下整集
+    '--js-runtimes', 'node',  // YouTube 签名挑战需要 JS 运行时（node.exe 已放本目录）
     // 字幕：优先真人上传的简体中文字幕；ai-zh 是 B 站的 AI 字幕语言代码
     '--write-subs',
     '--write-auto-subs',
     '--sub-langs', 'zh-Hans,zh-CN,zh-Hans-zh,ai-zh',
     '--convert-subs', 'srt',
     '--embed-subs',
-  );
+  ];
 
   // Cookie 池：目录里所有 cookies*.txt 自动合并，按域名生效；
-  // 池为空时用 config.json 的 cookiesFromBrowser。
+  // 池为空时才尝试读浏览器（需浏览器未运行）。
   const cookiePool = buildCookiePool();
   if (cookiePool) {
     args.push('--cookies', cookiePool);
-  } else if (CFG.cookiesFromBrowser) {
-    args.push('--cookies-from-browser', CFG.cookiesFromBrowser);
+  } else {
+    const chromeCookies = 'C:\\Users\\joe\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cookies';
+    const edgeCookies   = 'C:\\Users\\joe\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Cookies';
+    if (fs.existsSync(chromeCookies)) {
+      args.push('--cookies-from-browser', 'chrome');
+    } else if (fs.existsSync(edgeCookies)) {
+      args.push('--cookies-from-browser', 'edge');
+    }
   }
 
   args.push(task.url);
@@ -169,22 +132,7 @@ function startDownload(task) {
 
   // PYTHONUTF8=1 强制 yt-dlp(Python) 用 UTF-8 输出，避免 Windows 管道下中文标题变 GBK 乱码
   const env = Object.assign({}, process.env, { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' });
-  let proc;
-  try {
-    proc = spawn(YTDL, args, { cwd: BASE, windowsHide: true, env });
-  } catch (e) {
-    task.status = 'error';
-    task.lastError = '启动 yt-dlp 失败：' + e.message;
-    saveTaskState(task);
-    broadcast(task);
-    return;
-  }
-  proc.on('error', (e) => {
-    task.status = 'error';
-    task.lastError = '找不到 yt-dlp 可执行文件：' + e.message;
-    saveTaskState(task);
-    broadcast(task);
-  });
+  const proc = spawn(YTDL, args, { cwd: BASE, windowsHide: true, env });
   task.proc = proc;
 
   const onData = (buf) => {
@@ -260,9 +208,12 @@ function startDownload(task) {
 }
 
 // ---------------------------------------------------------------------------
-// 离线语音转文字（本地 Whisper / faster-whisper，配置见 config.json）
+// 离线语音转文字（复用 listen 项目的 conda 环境 + large-v3 模型）
 // 把视频/音频的语音转成简体中文字幕(SRT)，落进同名文件夹
 // ---------------------------------------------------------------------------
+const LISTEN_PY = 'C:\\Users\\joe\\.conda\\envs\\listen\\python.exe';
+const TRANSCRIBE_SCRIPT = path.join(BASE, 'transcribe_video.py');
+
 // 根据已完成任务的 filename 找到对应的视频文件绝对路径
 function resolveVideoFile(task) {
   if (!task || !task.filename) return null;
@@ -331,11 +282,7 @@ function startTranscribe(task) {
   task.kind = 'transcribe';     // 标记任务类型，前端据此显示不同文案
   task.log = [];
 
-  const env = Object.assign({}, process.env, {
-    PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',
-    ASD_WHISPER_MODEL: CFG.whisperModel || '',   // 空则由脚本自动下载 large-v3
-    ASD_LANGUAGE: CFG.language || 'zh'
-  });
+  const env = Object.assign({}, process.env, { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' });
   let proc;
   try {
     proc = spawn(LISTEN_PY, [TRANSCRIBE_SCRIPT, videoPath], {
@@ -343,7 +290,7 @@ function startTranscribe(task) {
     });
   } catch (e) {
     task.status = 'error';
-    task.lastError = '启动转写进程失败（检查 config.json 的 python 路径）：' + e.message;
+    task.lastError = '启动转写进程失败：' + e.message;
     saveTaskState(task);
     broadcast(task);
     return;
@@ -351,7 +298,7 @@ function startTranscribe(task) {
   // spawn 异步错误（如解释器路径不存在）兜底，避免单个任务拖垮整个服务
   proc.on('error', (e) => {
     task.status = 'error';
-    task.lastError = '转写进程错误（检查 config.json 的 python 路径）：' + e.message;
+    task.lastError = '转写进程错误：' + e.message;
     saveTaskState(task);
     broadcast(task);
   });
@@ -426,6 +373,54 @@ function findLatestVideo() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 视频库：用 ffmpeg 取封面(第1秒)+时长+分辨率，结果缓存进 .thumbs/
+// ---------------------------------------------------------------------------
+const { execFile } = require('child_process');
+// 本目录 ffmpeg/bin 只有 ffmpeg.exe，没有 ffprobe —— 直接解析 ffmpeg 输出取时长+分辨率
+function ffprobeMeta(vidPath) {
+  return new Promise((resolve) => {
+    const ff = path.join(FFMPEG, 'ffmpeg.exe');
+    execFile(ff, ['-hide_banner', '-i', vidPath], { timeout: 30000 }, () => {
+      // ffmpeg 无输出文件会报错退出，但元数据在 stderr 里
+    });
+    execFile(ff, ['-hide_banner', '-i', vidPath], { timeout: 30000 }, (err, stdout, stderr) => {
+      const out = stderr || '';
+      const dm = out.match(/Duration:\s*(\d+):(\d+):(\d+)/);
+      let duration = 0;
+      if (dm) duration = (+dm[1]) * 3600 + (+dm[2]) * 60 + (+dm[3]);
+      // 分辨率：行内形如 ", 1920x1080 [SAR..."，取第二个数字（高度）
+      const vm = out.match(/Video:.*?(\d{2,5})x(\d{2,5})/);
+      const height = vm ? parseInt(vm[2], 10) : 0;
+      resolve(duration || height ? { duration, height } : null);
+    });
+  });
+}
+function makeThumb(vidPath, thumbName) {
+  return new Promise((resolve) => {
+    const out = path.join(THUMB_DIR, thumbName);
+    if (fs.existsSync(out)) return resolve(true);   // 缓存命中
+    const ff = path.join(FFMPEG, 'ffmpeg.exe');
+    execFile(ff, ['-y', '-ss', '1', '-i', vidPath, '-frames:v', '1',
+      '-vf', 'scale=480:-1', '-q:v', '4', out], { timeout: 60000 }, (err) => {
+      resolve(!err && fs.existsSync(out));
+    });
+  });
+}
+async function videoMeta(vidPath, baseName, dirName, hasSub) {
+  const thumbName = dirName.replace(/[^\w-]/g, '_').slice(0, 80) + '.jpg';
+  const [meta, thumbOk] = await Promise.all([ffprobeMeta(vidPath), makeThumb(vidPath, thumbName)]);
+  const duration = meta ? meta.duration : 0;
+  const height = meta ? meta.height : 0;
+  return {
+    title: baseName.replace(/\s*\[[A-Za-z0-9_-]{11}\]$/, ''),
+    dir: dirName,
+    file: path.basename(vidPath),
+    duration, height, hasSub,
+    thumb: thumbOk ? '/thumb?name=' + encodeURIComponent(thumbName) : ''
+  };
+}
+
 // 把任务状态广播给所有 SSE 连接
 const sseClients = new Set();
 function broadcast(task) {
@@ -461,10 +456,51 @@ const server = http.createServer((req, res) => {
 
   const url = req.url.split('?')[0];
 
-  // 前端启动时读一次配置（保存目录 / 是否走代理）
-  if (url === '/api/config' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ ok: true, saveDir: OUT_DIR, hasProxy: !!CFG.proxy }));
+  // ===================== 视频库 =====================
+  // 列出媒体库全部视频（封面+时长+分辨率+字幕标记），首次访问时用 ffmpeg 生成封面并缓存
+  if (url === '/library' && req.method === 'GET') {
+    (async () => {
+      const items = [];
+      let dirs = [];
+      try { dirs = fs.readdirSync(OUT_DIR, { withFileTypes: true }); } catch (e) {}
+      for (const d of dirs) {
+        if (!d.isDirectory() || d.name.startsWith('.')) continue;
+        const dir = path.join(OUT_DIR, d.name);
+        let files = [];
+        try { files = fs.readdirSync(dir); } catch (e) { continue; }
+        const vid = files.find(f => /\.(webm|mp4|mkv)$/i.test(f));
+        if (!vid) continue;
+        const vidPath = path.join(dir, vid);
+        const baseName = vid.replace(/\.[^.]+$/, '');
+        // 字幕检测：精确匹配同名前缀的中文字幕文件（zh/zh-Hans/zh-CN/ai-zh）
+        const hasSub = files.some(f => {
+          if (!/\.srt$/i.test(f)) return false;
+          const n = f.replace(/\.srt$/i, '');
+          return n.startsWith(baseName + '.') && /^(zh|zh-Hans|zh-CN|ai-zh)$/i.test(n.slice(baseName.length + 1));
+        });
+        items.push(await videoMeta(vidPath, baseName, d.name, hasSub));
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: true, items }));
+    })().catch(e => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    });
+    return;
+  }
+
+  // 缩略图文件服务（/thumb?name=xxx.jpg）
+  if (url === '/thumb' && req.method === 'GET') {
+    const name = decodeURIComponent((req.url.split('?name=')[1] || '').split('&')[0]);
+    const p = path.join(THUMB_DIR, path.basename(name));
+    try {
+      const st = fs.statSync(p);
+      if (!st.isFile()) throw new Error('not a file');
+      res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+      res.end(fs.readFileSync(p));
+    } catch (e) {
+      res.writeHead(404); res.end();
+    }
     return;
   }
 
@@ -518,7 +554,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 用离线语音模型把视频音频转成中文字幕
+  // 用离线语音模型把视频音频转成中文字幕（复用 listen 项目的环境/模型）
   if (url === '/transcribe' && req.method === 'POST') {
     let body = '';
     req.on('data', c => body += c);
@@ -597,7 +633,7 @@ const server = http.createServer((req, res) => {
       } else {
         filePath = resolveVideoByTask(t) || path.resolve(BASE, t.filename);
       }
-      const baseDir = path.resolve(OUT_DIR) + path.sep;
+      const baseDir = path.resolve(BASE) + path.sep;
       if (!filePath.startsWith(baseDir)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'path outside base dir' }));
@@ -619,10 +655,48 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 视频库：播放/打开文件夹（dir + file 定位，路径锁定在媒体库内）
+  if (url === '/open-library' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      let dir = '', file = '', mode = 'folder';
+      try { ({ dir, file, mode } = JSON.parse(body)); } catch (e) {}
+      if (!dir || !file) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'missing dir/file' }));
+        return;
+      }
+      const filePath = path.resolve(OUT_DIR, dir, path.basename(file));
+      const baseDir = path.resolve(OUT_DIR) + path.sep;
+      if (!filePath.startsWith(baseDir)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'path outside library' }));
+        return;
+      }
+      if (!fs.existsSync(filePath)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'file missing' }));
+        return;
+      }
+      const cmd = mode === 'file'
+        ? `start "" "${filePath}"`
+        : `explorer /select,"${filePath}"`;
+      require('child_process').exec(cmd, { windowsHide: true });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    return;
+  }
+
   // 静态页面
   if (url === '/' || url === '/index.html') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(fs.readFileSync(path.join(BASE, 'index.html')));
+    try {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(fs.readFileSync(path.join(BASE, 'index.html')));
+    } catch (e) {
+      res.writeHead(500); res.end('index.html missing');
+    }
     return;
   }
 

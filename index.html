@@ -64,17 +64,56 @@
   .proxy-note { font-size: 12px; color: var(--orange); margin-top: 8px; }
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
   code { background: #f0f1f3; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .tab {
+    padding: 8px 18px; border-radius: 9px; cursor: pointer; font-size: 14px;
+    background: var(--card); border: 1px solid var(--line); color: var(--muted); transition: .15s;
+    font-family: inherit;
+  }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .lib-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; display: flex; flex-direction: column; transition: .15s;
+  }
+  .lib-card:hover { border-color: var(--accent); }
+  .lib-thumb {
+    width: 100%; aspect-ratio: 16/9; background: #eef0f3 center/cover no-repeat;
+    cursor: pointer; position: relative; display: block;
+  }
+  .lib-dur {
+    position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.72);
+    color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 4px;
+  }
+  .lib-sub-badge {
+    position: absolute; left: 6px; top: 6px; background: rgba(24,160,88,.92);
+    color: #fff; font-size: 11px; padding: 1px 7px; border-radius: 4px;
+  }
+  .lib-info { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .lib-title {
+    font-size: 13px; line-height: 1.45; font-weight: 500; color: var(--text);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .lib-meta { color: var(--muted); font-size: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .lib-actions { display: flex; gap: 8px; margin-top: auto; }
+  .lib-loading { text-align: center; color: var(--muted); padding: 50px 0; font-size: 13px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>📥 视频下载器</h1>
-  <div class="sub">基于 yt-dlp · 自动下载中文字幕 · 视频保存到 <code id="saveDir">…</code></div>
+  <div class="sub">基于 yt-dlp · 视频自动保存到 <code>当前目录\downloaded videos</code></div>
 
+  <div class="tabs">
+    <div class="tab active" id="tabDl">⬇ 下载</div>
+    <div class="tab" id="tabLib">🎞 视频库</div>
+  </div>
+
+  <div id="pageDl">
   <div class="panel">
     <textarea id="urls" placeholder="在此粘贴视频链接，每行一个（支持 B站 / YouTube 等）&#10;例如：&#10;https://www.bilibili.com/video/BV1xx411c7mZ&#10;https://www.youtube.com/watch?v=xxxx"></textarea>
-    <div class="hint">支持批量：粘贴多个链接，点击「添加并下载」会依次下载，单条失败不影响其余。下载完成后若没有中文字幕，会自动用本地 Whisper 模型离线转写生成。</div>
-    <div class="proxy-note" id="proxyNote" style="display:none">⚠ 当前已配置代理，若视频站点无法访问请检查代理软件是否开启（config.json: proxy）。</div>
+    <div class="hint">支持批量：粘贴多个链接，点击「添加并下载」会依次下载，单条失败不影响其余。</div>
+    <div class="proxy-note" id="proxyNote">⚠ 使用前请确认 VPN 代理（7897 端口）已开启，否则 YouTube 等无法访问。</div>
     <div class="row">
       <button class="btn-primary" id="addBtn">添加并下载</button>
       <button class="btn-ghost" id="clearBtn">清空输入框</button>
@@ -94,20 +133,24 @@
       <button class="btn-line btn-sm" id="cancelAll">取消全部</button>
     </div>
   </div>
+  </div><!-- /pageDl -->
 
-  <footer>本地应用 · 数据不出本机 · 后端 server.js 调用本地 yt-dlp 与 faster-whisper</footer>
+  <div id="pageLib" style="display:none">
+    <div class="panel">
+      <div class="list-head">
+        <h2>已下载视频</h2>
+        <span class="count" id="libCount">加载中…</span>
+      </div>
+      <div class="lib-loading" id="libLoading">正在扫描媒体库并生成封面（首次较慢）…</div>
+      <div class="lib-grid" id="libGrid"></div>
+    </div>
+  </div>
+
+  <footer>本地应用 · 数据不出本机 · 后端 server.js 调用目录内 yt-dlp.exe</footer>
 </div>
 
 <script>
   const tasks = new Map(); // id -> dom data
-
-  // 启动时读一次服务端配置（保存目录 / 是否配置了代理）
-  fetch('/api/config').then(r => r.json()).then(cfg => {
-    if (cfg.ok) {
-      document.getElementById('saveDir').textContent = cfg.saveDir;
-      if (cfg.hasProxy) document.getElementById('proxyNote').style.display = 'block';
-    }
-  }).catch(() => {});
 
   function statusBadge(s) {
     const map = {
@@ -140,7 +183,7 @@
       if (t.size) meta.push('大小 ' + t.size);
       if (t.speed) meta.push('速度 ' + t.speed);
       if (t.eta && t.status === 'downloading') meta.push('剩余 ' + t.eta);
-      if (t.status === 'transcribing') meta.push('离线语音转文字（本地 Whisper，不上传）');
+      if (t.status === 'transcribing') meta.push('离线语音转文字（GPU 加速）');
       if (t.filename) {
         // 只显示文件名（截掉目录路径），避免长路径刷屏
         const shortName = t.filename.split(/[\\/]/).pop();
@@ -295,6 +338,75 @@
   }
 
   document.getElementById('addBtn').onclick = addTasks;
+
+  // ============ 标签页切换 ============
+  const tabDl = document.getElementById('tabDl');
+  const tabLib = document.getElementById('tabLib');
+  function switchTab(which) {
+    const isLib = which === 'lib';
+    tabDl.classList.toggle('active', !isLib);
+    tabLib.classList.toggle('active', isLib);
+    document.getElementById('pageDl').style.display = isLib ? 'none' : '';
+    document.getElementById('pageLib').style.display = isLib ? '' : 'none';
+    if (isLib) loadLibrary();
+  }
+  tabDl.onclick = () => switchTab('dl');
+  tabLib.onclick = () => switchTab('lib');
+
+  // ============ 视频库 ============
+  function fmtDur(s) {
+    if (!s) return '--:--';
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    return h ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+             : `${m}:${String(sec).padStart(2,'0')}`;
+  }
+  async function loadLibrary() {
+    const grid = document.getElementById('libGrid');
+    const loading = document.getElementById('libLoading');
+    loading.style.display = ''; loading.textContent = '正在扫描媒体库并生成封面（首次较慢）…';
+    grid.innerHTML = '';
+    try {
+      const r = await (await fetch('/library')).json();
+      loading.style.display = 'none';
+      document.getElementById('libCount').textContent = r.items.length + ' 个视频';
+      if (!r.items.length) { loading.style.display=''; loading.textContent='媒体库还是空的，先去下载几个视频吧。'; return; }
+      grid.innerHTML = r.items.map((v, i) => `
+        <div class="lib-card">
+          <div class="lib-thumb" data-libplay="${i}" style="background-image:url('${v.thumb || ''}')">
+            ${v.thumb ? '' : '<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px">无封面</span>'}
+            ${v.hasSub ? '<span class="lib-sub-badge">中文字幕</span>' : ''}
+            <span class="lib-dur">${fmtDur(v.duration)}</span>
+          </div>
+          <div class="lib-info">
+            <div class="lib-title" title="${escapeHtml(v.title)}">${escapeHtml(v.title)}</div>
+            <div class="lib-meta"><span>${v.height ? v.height + 'P' : '未知清晰度'}</span>${v.hasSub ? '' : '<span style="color:var(--orange)">无字幕</span>'}</div>
+            <div class="lib-actions">
+              <button class="btn-line btn-sm" data-libplay="${i}">▶ 播放</button>
+              <button class="btn-line btn-sm" data-libdir="${i}">📂 文件夹</button>
+            </div>
+          </div>
+        </div>`).join('');
+      const items = r.items;
+      document.querySelectorAll('[data-libplay]').forEach(b => {
+        b.onclick = () => openLibraryItem(items[+b.getAttribute('data-libplay')], 'file');
+      });
+      document.querySelectorAll('[data-libdir]').forEach(b => {
+        b.onclick = () => openLibraryItem(items[+b.getAttribute('data-libdir')], 'folder');
+      });
+    } catch (err) {
+      loading.style.display = ''; loading.textContent = '加载失败：' + err.message;
+    }
+  }
+  async function openLibraryItem(item, mode) {
+    try {
+      const r = await (await fetch('/open-library', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir: item.dir, file: item.file, mode })
+      })).json();
+      if (!r.ok) alert('操作失败：' + (r.error || '未知错误'));
+    } catch (err) { alert('请求失败：' + err.message); }
+  }
+
   document.getElementById('clearBtn').onclick = () => document.getElementById('urls').value = '';
   document.getElementById('clearDone').onclick = () => {
     for (const [id, t] of tasks) if (t.status === 'done') tasks.delete(id);
