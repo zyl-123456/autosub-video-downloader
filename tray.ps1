@@ -52,6 +52,7 @@ if (-not $portBusy) {
     $serverProc.BeginOutputReadLine()
     $serverProc.BeginErrorReadLine()
 }
+# marker: adopt-existing (see balloon below)
 
 # ---- tray icon ----
 $iconPath = Join-Path $Base 'tray-icon32.png'
@@ -113,7 +114,12 @@ $notify.add_MouseUp({
     if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Open-Ui }
 })
 
-$notify.ShowBalloonTip(2000, 'Autosub Video Downloader', "Running in background - UI: $UiUrl", 'Info')
+if ($portBusy) {
+    $notify.ShowBalloonTip(3000, 'Autosub Video Downloader',
+        "Port $Port is ALREADY in use by another program. The tray icon now points to THAT server (it may not be this project's). Quit it and restart the tray to use this project's server.", 'Warning')
+} else {
+    $notify.ShowBalloonTip(2000, 'Autosub Video Downloader', "Running in background - UI: $UiUrl", 'Info')
+}
 
 # ---- message loop (keep resident until Application::Exit from menu) ----
 $ctx = New-Object System.Windows.Forms.ApplicationContext
