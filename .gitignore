@@ -1,35 +1,23 @@
-# 一切本地配置与私密文件不入库
-config.json
-cookies.txt
+# ============================================================
+# 白名单模式：默认忽略根目录所有内容，仅放行以下项目文件
+# （视频/字幕/日志/配置等运行时产物天然全部被排除）
+# ============================================================
+/*
 
-# 运行时产物
-*.log
-.task-log.json
-_run_server.cmd
+# 项目源码与文档
+!/.gitignore
+!/.github/
+!/LICENSE
+!/README.md
+!/config.example.json
+!/index.html
+!/server.js
+!/start.bat
+!/start.vbs
+!/transcribe_video.py
+!/docs/
 
-# 下载的视频与字幕（按标题自动建文件夹）
-/*/
-
-# 大二进制不进仓库，用户按 README 自行下载
-yt-dlp.exe
-yt-dlp
-youtube-dl.exe
-node.exe
-ffmpeg/
-*.mp4
-*.mkv
-*.webm
-*.flv
-*.mov
-*.m4a
-*.mp3
-*.wav
-*.part
-*.ytdl
-*.srt
-*.vtt
-
-# 系统杂物
+# docs 内忽略编辑器杂物
 Thumbs.db
 Desktop.ini
 .DS_Store
