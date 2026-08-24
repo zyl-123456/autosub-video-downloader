@@ -108,7 +108,10 @@ $menu.Items.Add($miExit) | Out-Null
 
 $notify.ContextMenuStrip = $menu
 $notify.add_DoubleClick({ Open-Ui })
-$notify.add_Click({ Open-Ui })
+# Left-click only (right-click must open the context menu, not the UI)
+$notify.add_MouseUp({
+    if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Open-Ui }
+})
 
 $notify.ShowBalloonTip(2000, 'Autosub Video Downloader', "Running in background - UI: $UiUrl", 'Info')
 
