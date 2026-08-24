@@ -69,22 +69,24 @@ pip install faster-whisper zhconv
 
 > **GPU 加速（NVIDIA）**：Windows 上脚本会自动从本机 Ollama 或 CUDA Toolkit 目录补齐 cublas DLL，无需手动装 CUDA。无 N 卡则自动用 CPU（较慢但可用）。
 
-### 第 4 步（可选）：站点 Cookie（获取站点字幕 / 解锁 YouTube）
+### 第 4 步（可选）：站点 Cookie（获取站点字幕 / 解锁登录墙）
 
-**B 站和 YouTube 的 Cookie 是各自独立的文件，互不干扰：**
+**采用「Cookie 池」机制：任何文件名以 `cookies` 开头、`.txt` 结尾的文件（如 `cookies.txt`、`cookies-bilibili.txt`、`cookies twitter.txt`）放进项目目录，服务会在每次下载前自动把它们全部合并成一个运行时库。**
 
-| 站点 | Cookie 文件 | 作用 |
-|---|---|---|
-| B 站 | `cookies-bilibili.txt` | 获取 UP 主上传的 CC 字幕（B站字幕**必须登录**才能拿到） |
-| YouTube | `cookies-youtube.txt` | 解锁"not a bot"拦截，并获取字幕 |
-| 通用兜底 | `cookies.txt` | 上面两个都不存在时使用（Netscape 格式可含多域名条目） |
+Netscape 格式的 cookie 每行都带域名字段，yt-dlp 会自动只把对应站点的 Cookie 发给对应站点，互不干扰、无需任何配置。
 
-下载链接是 B 站就自动用 `cookies-bilibili.txt`，是 YouTube 就自动用 `cookies-youtube.txt`，无需任何配置。
+**新站点接入 = 两步，不改任何代码：**
 
-导出方法（两个站点一样）：在已登录对应站点的浏览器里装扩展
-[Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)，
-打开对应网站 → 点扩展图标 → Export → 把导出的文件按上表重命名后放到项目目录。
-（Cookie 过期后重新导出覆盖一次即可。）
+1. 在已登录该站点的浏览器里用扩展 [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) 导出（文件名随意，只要 `cookies` 开头 `.txt` 结尾）
+2. 丢进项目目录，完事
+
+| 常见场景 | 为什么要 Cookie |
+|---|---|
+| B 站 | CC 字幕**必须登录**才能获取；不登录也能下视频，只是没官方字幕（会自动走离线转写） |
+| YouTube | 解锁 "not a bot" 拦截 + 获取字幕 |
+| Twitter/X、Instagram 等有登录墙的站 | 不登录看不到内容 |
+
+（某站点的 Cookie 过期后，重新导出一份丢进来覆盖旧文件即可。）
 
 ### 第 5 步：启动
 

@@ -109,21 +109,30 @@ function parseProgress(line) {
   return null;
 }
 
-// 按站点挑 Cookie 文件：B站/YouTube 各用各的，互不干扰；
-// 都没有时兜底用通用 cookies.txt（Netscape 格式可含多域名条目，yt-dlp 按域名自动取用）
-function pickCookieArgs(url) {
-  const u = (url || '').toLowerCase();
-  const isBili = u.includes('bilibili.com') || u.includes('b23.tv');
-  const isYt = u.includes('youtube.com') || u.includes('youtu.be');
-  const cands = [];
-  if (isBili) cands.push('cookies-bilibili.txt');
-  if (isYt) cands.push('cookies-youtube.txt');
-  cands.push('cookies.txt');
-  for (const name of cands) {
-    const p = path.join(BASE, name);
-    if (fs.existsSync(p)) return ['--cookies', p];
+// Cookie 池：目录里任何名字的 cookies*.txt 都会被自动合并成运行时库，
+// yt-dlp 按域名自动匹配（Netscape 格式每行带域名字段，多域名互不干扰）。
+// 新站点 = 浏览器导出 cookie 文件丢进本目录，零配置零改代码。
+const COOKIE_GLOB_RE = /^cookies.*\.txt$/i;
+function buildCookiePool() {
+  let names = [];
+  try { names = fs.readdirSync(BASE); } catch (e) {}
+  const files = names.filter(n => COOKIE_GLOB_RE.test(n) && n !== '.task-log.json');
+  if (!files.length) return null;
+  // 合并所有 cookie 文件为一个临时库（跳过注释与表头，保留每个文件的域名字段）
+  const merged = [];
+  for (const name of files) {
+    try {
+      const lines = fs.readFileSync(path.join(BASE, name), 'utf8')
+        .split(/\r?\n/).filter(l => l.trim() && !l.startsWith('#'));
+      merged.push(...lines);
+    } catch (e) { /* 单个文件读失败跳过 */ }
   }
-  return null;
+  if (!merged.length) return null;
+  const pool = path.join(BASE, '.cookie-pool.txt');
+  try {
+    fs.writeFileSync(pool, '# Netscape HTTP Cookie File (merged pool)\n' + merged.join('\n') + '\n');
+    return pool;
+  } catch (e) { return null; }
 }
 
 function startDownload(task) {
@@ -135,19 +144,22 @@ function startDownload(task) {
     '-o', '%(title)s/%(title)s [%(id)s].%(ext)s',   // 每条视频自动建同名文件夹，视频+字幕都存里面
     '--newline',
     '--no-playlist',          // 单条链接默认不下整个列表，避免误下整集
-    // 字幕：优先真人上传的简体中文字幕，没有则用简体自动字幕；存 srt 旁车文件并尝试嵌入
+    // 字幕：优先真人上传的简体中文字幕；ai-zh 是 B 站的 AI 字幕语言代码
     '--write-subs',
     '--write-auto-subs',
-    '--sub-langs', 'zh-Hans,zh-CN,zh-Hans-zh',
+    '--sub-langs', 'zh-Hans,zh-CN,zh-Hans-zh,ai-zh',
     '--convert-subs', 'srt',
     '--embed-subs',
   );
 
-  // Cookie 按站点自动挑：B站用 cookies-bilibili.txt，YouTube 用 cookies-youtube.txt，
-  // 兜底通用 cookies.txt；都没有时用 config.json 的 cookiesFromBrowser。
-  const cookieArgs = pickCookieArgs(task.url) ||
-    (CFG.cookiesFromBrowser ? ['--cookies-from-browser', CFG.cookiesFromBrowser] : null);
-  if (cookieArgs) args.push(...cookieArgs);
+  // Cookie 池：目录里所有 cookies*.txt 自动合并，按域名生效；
+  // 池为空时用 config.json 的 cookiesFromBrowser。
+  const cookiePool = buildCookiePool();
+  if (cookiePool) {
+    args.push('--cookies', cookiePool);
+  } else if (CFG.cookiesFromBrowser) {
+    args.push('--cookies-from-browser', CFG.cookiesFromBrowser);
+  }
 
   args.push(task.url);
 
