@@ -8,6 +8,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 const PORT = 8731;
@@ -133,6 +134,29 @@ function ensureYtdlp() {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// yt-dlp 输出解码
+// 痛点：yt-dlp 在 Windows 上即便设了 PYTHONUTF8=1，偶发仍按系统编码(GBK)输出；
+//       直接 buf.toString('utf8') 会把 GBK 字节当 UTF-8 解，中文变 Ϊʲô 之类乱码。
+//       另外 data 事件可能把一个多字节字符切到两个 chunk，逐 chunk 解码会丢字符。
+// 方案：缓存原始字节，按 \r/\n 切出完整行（这两个是 ASCII，不会落在多字节字符中间），
+//       每行先按 UTF-8 解；若没解出中文、但字节里有高位字节，就按 GBK 重解——
+//       GBK 解出中文说明原是 GBK 编码，用它替换。（不靠脆弱的乱码字符范围正则）
+// ---------------------------------------------------------------------------
+const _utf8Dec = new TextDecoder('utf-8', { fatal: false });
+const _gbkDec = new TextDecoder('gbk', { fatal: false });
+function decodeYtdlpLine(bytes) {
+  const u = _utf8Dec.decode(bytes);
+  if (/[\u4e00-\u9fff]/.test(u)) return u;            // UTF-8 已解出中文，正常
+  // UTF-8 没解出中文，却出现 3+ 个连续非 ASCII 字符（0080-04FF）→ 典型的
+  // "GBK 中文被当 UTF-8 误读"特征（如 为什么→Ϊʲô）。合法重音词（café）只有零星
+  // 单个高位字符，凑不出连续 3 个，不会误触发。此时按 GBK 重解，解出中文即采用。
+  if (/[\u0080-\u04ff]{3,}/.test(u)) {
+    try { const g = _gbkDec.decode(bytes); if (/[\u4e00-\u9fff]/.test(g)) return g; } catch (e) {}
+  }
+  return u;
+}
+
 function startDownload(task) {
   // 体检：yt-dlp 缺失或只是启动器桩时先自愈，别把晦涩的 Python 报错甩给用户
   if (!refreshYtdlpHealth()) {
@@ -186,37 +210,54 @@ function startDownload(task) {
   const proc = spawn(YTDL, args, { cwd: BASE, windowsHide: true, env });
   task.proc = proc;
 
+  // 处理一行 yt-dlp 输出：解析进度 / 文件名 / 合并 / 错误
+  function handleLine(line) {
+    const p = parseProgress(line);
+    if (p) {
+      task.percent = p.percent;
+      task.size = p.size;
+      task.speed = p.speed;
+      task.eta = p.eta;
+      broadcast(task);
+    } else if (line.includes('[download] Destination:')) {
+      task.filename = line.split('Destination:')[1].trim();
+      saveTaskState(task);
+      broadcast(task);
+    } else if (line.includes('[Merger]') || line.includes('Merging')) {
+      // [Merger] Merging formats into "最终文件.mp4" —— 用合并后的成品文件名替换下载中的临时名
+      const m = line.match(/Merging formats into "(.+?)"/);
+      if (m) task.filename = m[1];
+      task.merging = true;
+      saveTaskState(task);
+      broadcast(task);
+    } else if (line.toLowerCase().includes('error') || line.includes('ERROR')) {
+      task.lastError = line.trim();
+      saveTaskState(task);
+      broadcast(task);
+    }
+  }
+
+  // 缓存原始字节、按 \r/\n 切完整行再解码，避免 chunk 把多字节字符切开 + 兼容 GBK 输出
+  let rawBuf = Buffer.alloc(0);
   const onData = (buf) => {
-    // yt-dlp 已通过 PYTHONUTF8=1 输出 UTF-8，显式按 UTF-8 解码
-    const text = buf.toString('utf8');
-    task.log.push(text);
-    if (task.log.length > 200) task.log.shift();
-    // yt-dlp 每行以 \r 刷新进度，--newline 后多为 \n
-    const lines = text.split(/\r|\n/).filter(Boolean);
-    for (const line of lines) {
-      const p = parseProgress(line);
-      if (p) {
-        task.percent = p.percent;
-        task.size = p.size;
-        task.speed = p.speed;
-        task.eta = p.eta;
-        broadcast(task);
-      } else if (line.includes('[download] Destination:')) {
-        task.filename = line.split('Destination:')[1].trim();
-        saveTaskState(task);
-        broadcast(task);
-      } else if (line.includes('[Merger]') || line.includes('Merging')) {
-        // [Merger] Merging formats into "最终文件.mp4" —— 用合并后的成品文件名替换下载中的临时名
-        const m = line.match(/Merging formats into "(.+?)"/);
-        if (m) task.filename = m[1];
-        task.merging = true;
-        saveTaskState(task);
-        broadcast(task);
-      } else if (line.toLowerCase().includes('error') || line.includes('ERROR')) {
-        task.lastError = line.trim();
-        saveTaskState(task);
-        broadcast(task);
+    rawBuf = Buffer.concat([rawBuf, buf]);
+    let start = 0;
+    const lines = [];
+    for (let i = 0; i < rawBuf.length; i++) {
+      const b = rawBuf[i];
+      if (b === 0x0A || b === 0x0D) {
+        if (i > start) lines.push(rawBuf.slice(start, i));
+        start = i + 1;
+        if (b === 0x0D && rawBuf[i + 1] === 0x0A) { i++; start = i + 1; }
       }
+    }
+    rawBuf = rawBuf.slice(start);   // 保留最后一段未结束的片段
+    for (const lb of lines) {
+      const line = decodeYtdlpLine(lb);
+      if (!line) continue;
+      task.log.push(line);
+      if (task.log.length > 200) task.log.shift();
+      handleLine(line);
     }
   };
 
@@ -224,6 +265,12 @@ function startDownload(task) {
   proc.stderr.on('data', onData);
 
   proc.on('close', (code) => {
+    // 收尾：冲刷残留字节
+    if (rawBuf.length) {
+      const line = decodeYtdlpLine(rawBuf);
+      rawBuf = Buffer.alloc(0);
+      if (line) { task.log.push(line); handleLine(line); }
+    }
     task.proc = null;
     if (code === 0) {
       task.status = 'done';
@@ -459,7 +506,9 @@ function makeThumb(vidPath, thumbName) {
   });
 }
 async function videoMeta(vidPath, baseName, dirName, hasSub) {
-  const thumbName = dirName.replace(/[^\w-]/g, '_').slice(0, 80) + '.jpg';
+  // 用视频路径的哈希做缩略图文件名：编码无关、稳定、无碰撞，
+  // 不会像旧的 [^\w-]→'_' 那样把中文全替成下划线
+  const thumbName = crypto.createHash('md5').update(vidPath).digest('hex').slice(0, 16) + '.jpg';
   const [meta, thumbOk] = await Promise.all([ffprobeMeta(vidPath), makeThumb(vidPath, thumbName)]);
   const duration = meta ? meta.duration : 0;
   const height = meta ? meta.height : 0;
