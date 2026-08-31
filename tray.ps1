@@ -93,6 +93,51 @@ $miFolder = New-Object System.Windows.Forms.ToolStripMenuItem('Open download fol
 $miFolder.add_Click({ Start-Process explorer.exe $Base })
 $menu.Items.Add($miFolder) | Out-Null
 
+# ---- update yt-dlp in the background (force re-download of the standalone build) ----
+$miFix = New-Object System.Windows.Forms.ToolStripMenuItem('Update yt-dlp (force re-download)')
+$miFix.add_Click({
+    $fixScript  = Join-Path $Base 'fix-ytdlp.js'
+    $statusFile = Join-Path $Base '.ytdlp-fix.status'
+    if (-not (Test-Path $fixScript)) {
+        $notify.ShowBalloonTip(4000, 'yt-dlp', 'fix-ytdlp.js not found in the project folder.', 'Error')
+        return
+    }
+    if (Test-Path $statusFile) { Remove-Item $statusFile -Force -ErrorAction SilentlyContinue }
+    try {
+        $p = Start-Process -FilePath $NodeExe `
+             -ArgumentList @('"' + $fixScript + '"', '--force') `
+             -WorkingDirectory $Base -WindowStyle Hidden -PassThru
+    } catch {
+        $notify.ShowBalloonTip(4000, 'yt-dlp', 'Could not start updater: ' + $_.Exception.Message, 'Error')
+        return
+    }
+    $notify.ShowBalloonTip(2000, 'yt-dlp', 'Downloading the latest yt-dlp in the background...', 'Info')
+
+    # Poll for completion (max ~3 min), then report the result from the status file
+    $script:fixTicks = 0
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 1000
+    $timer.add_Tick({
+        $script:fixTicks++
+        if ($p.HasExited -or $script:fixTicks -gt 180) {
+            $timer.Stop()
+            $timer.Dispose()
+            $msg = 'No status file - see _fix-ytdlp.log'
+            if (Test-Path $statusFile) {
+                try {
+                    $j = Get-Content $statusFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($j.ok -and $j.version) { $msg = 'Updated to yt-dlp ' + $j.version }
+                    elseif ($j.ok)             { $msg = 'yt-dlp is already up to date.' }
+                    else                       { $msg = 'Update failed: ' + $j.error }
+                } catch { }
+            }
+            $notify.ShowBalloonTip(5000, 'yt-dlp update', $msg, 'Info')
+        }
+    })
+    $timer.Start()
+})
+$menu.Items.Add($miFix) | Out-Null
+
 $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
 
 $miAuto = New-Object System.Windows.Forms.ToolStripMenuItem('Start with Windows')
