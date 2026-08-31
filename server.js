@@ -157,8 +157,17 @@ const _utf8Dec = new TextDecoder('utf-8', { fatal: false });
 const _gbkDec = new TextDecoder('gbk', { fatal: false });
 function decodeYtdlpLine(bytes) {
   const u = _utf8Dec.decode(bytes);
+  // 情形 A：原字节不是合法 UTF-8（解码产生了 U+FFFD 替换符 �）→ 几乎必是
+  // Windows 默认代码页 GBK（936）的输出。直接按 GBK 重解，解出中文即采用。
+  // 这是第二轮乱码的根因：GBK 字节若恰好构成"非法 UTF-8 序列"，TextDecoder 会
+  // 吐出 �（U+FFFD），而不是第一轮那种"合法 UTF-8 但错字"的 Ϊʲô 型乱码，
+  // 之前用 0080-04FF 范围正则根本匹配不到 U+FFFD（65533），所以漏判。
+  if (u.includes('\uFFFD')) {
+    try { const g = _gbkDec.decode(bytes); if (/[\u4e00-\u9fff]/.test(g)) return g; } catch (e) {}
+    return u;
+  }
   if (/[\u4e00-\u9fff]/.test(u)) return u;            // UTF-8 已解出中文，正常
-  // UTF-8 没解出中文，却出现 3+ 个连续非 ASCII 字符（0080-04FF）→ 典型的
+  // 情形 B：UTF-8 没解出中文，却出现 3+ 个连续非 ASCII 字符（0080-04FF）→ 典型的
   // "GBK 中文被当 UTF-8 误读"特征（如 为什么→Ϊʲô）。合法重音词（café）只有零星
   // 单个高位字符，凑不出连续 3 个，不会误触发。此时按 GBK 重解，解出中文即采用。
   if (/[\u0080-\u04ff]{3,}/.test(u)) {
