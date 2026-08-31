@@ -420,33 +420,56 @@ function startTranscribe(task) {
   });
   task.proc = proc;
 
-  const onData = (buf) => {
-    const text = buf.toString('utf8');
-    task.log.push(text);
+  // 转写脚本输出同样按行缓冲 + decodeYtdlpLine 解码（和下载任务一致），
+  // 避免 GBK 输出或 chunk 切开多字节字符导致的中文字幕路径乱码
+  const handleTranscribeLine = (line) => {
+    task.log.push(line);
     if (task.log.length > 200) task.log.shift();
-    const lines = text.split(/\r|\n/).filter(Boolean);
-    for (const line of lines) {
-      const pm = line.match(/\[进度\]\s*(\d+)%/);
-      if (pm) {
-        task.percent = parseInt(pm[1], 10);
-        broadcast(task);
-      } else if (line.includes('[完成]')) {
-        const cm = line.match(/->\s*(.+)$/);
-        if (cm) task.subtitle = cm[1].trim();
-        task.status = 'done';
-        task.percent = 100;
-        broadcast(task);
-      } else if (line.includes('[错误]') || line.toLowerCase().includes('error') || line.includes('Traceback')) {
-        task.lastError = line.trim();
-        saveTaskState(task);
-        broadcast(task);
+    const pm = line.match(/\[进度\]\s*(\d+)%/);
+    if (pm) {
+      task.percent = parseInt(pm[1], 10);
+      broadcast(task);
+    } else if (line.includes('[完成]')) {
+      const cm = line.match(/->\s*(.+)$/);
+      if (cm) task.subtitle = cm[1].trim();
+      task.status = 'done';
+      task.percent = 100;
+      broadcast(task);
+    } else if (line.includes('[错误]') || line.toLowerCase().includes('error') || line.includes('Traceback')) {
+      task.lastError = line.trim();
+      saveTaskState(task);
+      broadcast(task);
+    }
+  };
+  let rawBuf = Buffer.alloc(0);
+  const onData = (buf) => {
+    rawBuf = Buffer.concat([rawBuf, buf]);
+    let start = 0;
+    const lines = [];
+    for (let i = 0; i < rawBuf.length; i++) {
+      const b = rawBuf[i];
+      if (b === 0x0A || b === 0x0D) {
+        if (i > start) lines.push(rawBuf.slice(start, i));
+        start = i + 1;
+        if (b === 0x0D && rawBuf[i + 1] === 0x0A) { i++; start = i + 1; }
       }
+    }
+    rawBuf = rawBuf.slice(start);
+    for (const lb of lines) {
+      const line = decodeYtdlpLine(lb);
+      if (line) handleTranscribeLine(line);
     }
   };
   proc.stdout.on('data', onData);
   proc.stderr.on('data', onData);
 
   proc.on('close', (code) => {
+    // 收尾：冲刷残留字节
+    if (rawBuf.length) {
+      const line = decodeYtdlpLine(rawBuf);
+      rawBuf = Buffer.alloc(0);
+      if (line) handleTranscribeLine(line);
+    }
     task.proc = null;
     if (task.status !== 'done') {
       if (code === 0) {
