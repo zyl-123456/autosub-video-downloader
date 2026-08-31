@@ -91,6 +91,8 @@ Netscape 格式的 cookie 每行都带域名字段，yt-dlp 会自动只把对�
 
 ### 第 5 步：启动
 
+**最快：双击 `启动下载器.vbs`** —— 静默启动服务（托盘模式）并**自动打开下载界面**，一键完成。
+
 **方式一：托盘常驻模式（推荐）— 无黑窗口**
 
 双击 **`tray.vbs`**：
@@ -137,6 +139,7 @@ node server.js
 ├── transcribe_video.py  # 离线转写脚本：ffmpeg 抽音频 → faster-whisper → SRT
 ├── config.example.json  # 配置模板（复制为 config.json 使用）
 ├── start.vbs / start.bat# 控制台模式启动器
+├── 启动下载器.vbs       # 一键启动：托盘模式 + 自动打开下载界面
 ├── tray.vbs / tray.ps1 # 托盘常驻模式（无黑窗口 + 系统托盘图标 + 开机自启）
 ├── extension/            # Chrome/Edge 浏览器扩展（一键下载当前页视频）
 └── docs/                 # 截图等文档资源

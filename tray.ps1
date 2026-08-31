@@ -54,10 +54,16 @@ if (-not $portBusy) {
 }
 # marker: adopt-existing (see balloon below)
 
-# ---- tray icon ----
-$iconPath = Join-Path $Base 'tray-icon32.png'
-$bmp = New-Object System.Drawing.Bitmap($iconPath)
-$icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
+# ---- tray icon: prefer downloader-icon.ico, fallback to legacy png ----
+$icoPath = Join-Path $Base 'downloader-icon.ico'
+$bmp = $null
+if (Test-Path $icoPath) {
+    $icon = New-Object System.Drawing.Icon($icoPath)
+} else {
+    $iconPath = Join-Path $Base 'tray-icon32.png'
+    $bmp = New-Object System.Drawing.Bitmap($iconPath)
+    $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
+}
 
 $notify = New-Object System.Windows.Forms.NotifyIcon
 $notify.Icon = $icon
@@ -126,4 +132,5 @@ $ctx = New-Object System.Windows.Forms.ApplicationContext
 [System.Windows.Forms.Application]::Run($ctx)
 
 # cleanup
-$bmp.Dispose(); $icon.Dispose(); $notify.Dispose()
+if ($bmp) { $bmp.Dispose() }
+$icon.Dispose(); $notify.Dispose()
