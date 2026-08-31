@@ -20,6 +20,14 @@ const THUMB_DIR = path.join(OUT_DIR, '.thumbs');       // 封面缩略图缓存
 fs.mkdirSync(OUT_DIR, { recursive: true });
 fs.mkdirSync(THUMB_DIR, { recursive: true });
 
+// yt-dlp 自愈：pip 会在同目录留下 ~108KB 的"启动器桩"exe，
+// 它运行时才去找 Python 里的 yt_dlp 模块，找不到就抛
+//   ModuleNotFoundError: No module named 'yt_dlp'
+// 官方独立版约 17MB+，开箱即用。这里做体检 + 自动下载替换。
+const FIX_SCRIPT = path.join(BASE, 'fix-ytdlp.js');
+const YTDL_MIN_SIZE = 1024 * 1024;   // 小于 1MB 一律判定为启动器桩
+const ytdlpHealth = { ok: true, checking: false, message: '' };
+
 // 简易任务表：id -> {url, proc, status, percent, ...}
 const tasks = new Map();
 let taskSeq = 0;
@@ -92,7 +100,50 @@ function buildCookiePool() {
   } catch (e) { return null; }
 }
 
+// ---------- yt-dlp 体检与自愈 ----------
+function refreshYtdlpHealth() {
+  let size = 0;
+  try { size = fs.statSync(YTDL).size; } catch (e) { size = 0; }
+  ytdlpHealth.ok = size >= YTDL_MIN_SIZE;
+  ytdlpHealth.message = ytdlpHealth.ok ? '' : (size === 0
+    ? '未找到 yt-dlp.exe，正在自动下载官方独立版（约 17MB）…'
+    : `yt-dlp.exe 是 pip 启动器桩（仅 ${size} 字节，无法独立运行），正在自动下载官方独立版（约 17MB）…`);
+  return ytdlpHealth.ok;
+}
+
+function repairYtdlp() {
+  if (ytdlpHealth.checking || !fs.existsSync(FIX_SCRIPT)) return;
+  ytdlpHealth.checking = true;
+  console.log('[yt-dlp] ' + ytdlpHealth.message);
+  const p = spawn(process.execPath, [FIX_SCRIPT], {
+    cwd: BASE, windowsHide: true, stdio: 'ignore', detached: true
+  });
+  p.on('error', () => { ytdlpHealth.checking = false; });
+  p.on('exit', () => {
+    ytdlpHealth.checking = false;
+    if (refreshYtdlpHealth()) console.log('[yt-dlp] 自愈完成，可以正常下载了。');
+    else console.warn('[yt-dlp] 自动修复未完成，请检查网络/代理（默认 127.0.0.1:7897）。');
+  });
+  p.unref();
+}
+
+function ensureYtdlp() {
+  if (refreshYtdlpHealth()) return true;
+  repairYtdlp();
+  return false;
+}
+
 function startDownload(task) {
+  // 体检：yt-dlp 缺失或只是启动器桩时先自愈，别把晦涩的 Python 报错甩给用户
+  if (!refreshYtdlpHealth()) {
+    task.status = 'error';
+    task.percent = 0;
+    task.lastError = ytdlpHealth.message + ' 稍等约半分钟后重试本条链接即可。';
+    saveTaskState(task);
+    repairYtdlp();
+    return;
+  }
+
   const args = [
     '--proxy', PROXY,
     '--ffmpeg-location', FFMPEG,
@@ -726,4 +777,9 @@ server.listen(PORT, () => {
   console.log(`yt-dlp download UI is running at http://127.0.0.1:${PORT}`);
   console.log(`Save directory: ${OUT_DIR}`);
   console.log('Keep this window OPEN while using the UI. Close it to stop the service.');
+
+  // 启动即体检：yt-dlp 是 108KB 的 pip 桩或缺失时，后台自动拉官方独立版
+  ensureYtdlp();
+  // 每 30 秒复检一次，修复完成后无需重启服务
+  setInterval(() => { if (!ytdlpHealth.ok) ensureYtdlp(); }, 30000).unref();
 });

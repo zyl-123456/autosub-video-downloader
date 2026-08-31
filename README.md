@@ -172,8 +172,20 @@ server.js ──spawn──► yt-dlp.exe ──► 视频落到 <标题>/<标�
 **Q：下载报 `Sign in to confirm you're not a bot`？**
 A：YouTube 需要 Cookie，见「第 4 步」。
 
+**Q：下载报 `ModuleNotFoundError: No module named 'yt_dlp'`？**
+A：说明目录里的 `yt-dlp.exe` 是 **pip 安装留下的启动器桩**（约 108KB），它自己不含下载逻辑，运行时会去找 Python 里的 `yt_dlp` 模块；本机 Python 没装这个模块就会报这个错。
+
+三种解决方式，任选其一：
+
+1. **自动修复（推荐，已内置）**：服务启动时会自动体检，发现是桩/缺失就后台拉取官方独立版替换，完成后控制台打印 `[yt-dlp] 自愈完成`。等约半分钟重试即可。
+2. **手动一条命令**：在项目目录执行 `node fix-ytdlp.js`（加 `--force` 可强制升级到最新版）。
+3. **手动下载**：从 [官方 Releases](https://github.com/yt-dlp/yt-dlp/releases) 下载 `yt-dlp.exe`（约 17MB+）覆盖同名文件。
+
+> 校验是否正常：`yt-dlp.exe --version` 能打印出 `2026.xx.xx` 这类版本号即正常；若仍报 `No module named 'yt_dlp'`，说明换上的还是桩。
+
 **Q：界面标题中文乱码？**
 A：服务已强制 `PYTHONUTF8=1`，一般不会出现；若你改过代码，注意 yt-dlp 子进程输出要按 UTF-8 解码。
+（注：命令行里用 `curl` 观察 SSE 输出时看到的文件名"乱码"，通常只是终端按 GBK 解码 UTF-8 的显示问题，磁盘上的文件名是正常的。）
 
 **Q：转写好慢？**
 A：CPU 模式下 large-v3 大约是视频时长的 1~2 倍耗时；有 N 卡会快一个数量级。也可在 `config.json` 把 `whisperModel` 指向小模型目录（如 `small`）。
