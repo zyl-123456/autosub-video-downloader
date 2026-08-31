@@ -10,9 +10,10 @@ A local video downloader with a web UI. Paste links → downloads best quality v
 
 - 🖥 **网页界面**：粘贴链接（支持批量，B 站 / YouTube 等 yt-dlp 支持的站点）→ 点下载 → 实时进度条（百分比 / 速度 / 剩余时间），不用记命令
 - 📁 **自动归档**：每条视频自动建同名文件夹，视频 + 字幕集中存放
-- 🈶 **自动中文字幕（核心特色）**：
-  - 下载时优先抓取站点自带的简体中文字幕（含自动字幕）
-  - 下载完成后检测，若没有中文字幕 → 自动调用本地 Whisper（faster-whisper large-v3）把音频离线转写成带时间戳的 SRT，**无需任何手动操作**
+- 🈶 **中文字幕（核心特色）**：
+  - 下载时优先抓取站点自带的简体中文字幕（含自动字幕、机翻 zh-Hans-zh 等）
+  - **默认不自动转写**（whisper large-v3 很吃 CPU/GPU，会让电脑卡）——下载完成后若没有中文字幕，界面上会出现「🎙 生成字幕」按钮，**按需点一下**才转写
+  - 想恢复"下载完自动转写"：在 `config.json` 设 `"autoTranscribe": true`（仍会跳过已有中文字幕的视频）
   - 离线转写完全在本机运行，不上传任何数据；有 NVIDIA 显卡自动用 GPU 加速
 - 🎞 **视频库标签页**：已下载视频统一归入 `downloaded videos` 目录，前端以卡片展示（视频第 1 秒截图作封面 + 标题 + 时长 + 清晰度 + 字幕标记），支持「播放」和「打开所在文件夹」
 - ▶ **完成即看**：界面上直接「播放」「打开文件夹」「查看字幕」
@@ -57,6 +58,7 @@ A local video downloader with a web UI. Paste links → downloads best quality v
 | `whisperModel` | 本地 Whisper 模型目录；留空 = 首次转写时自动下载 large-v3（约 3GB）到用户缓存 |
 | `language` | 转写语言，默认 `zh`（简体中文） |
 | `cookiesFromBrowser` | 留空则优先用项目目录的 `cookies.txt`；也可填 `"chrome"` / `"edge"` 直接读浏览器 |
+| `autoTranscribe` | 下载完成后是否**自动**离线转写。默认 `false`（转写很吃资源会卡电脑，建议按需手动点「🎙 生成字幕」）；设 `true` 开启自动转写（仍跳过已有中文字幕的视频） |
 
 ### 第 3 步（可选）：启用自动字幕的 Python 环境
 
@@ -83,7 +85,7 @@ Netscape 格式的 cookie 每行都带域名字段，yt-dlp 会自动只把对�
 
 | 常见场景 | 为什么要 Cookie |
 |---|---|
-| B 站 | CC 字幕**必须登录**才能获取；不登录也能下视频，只是没官方字幕（会自动走离线转写） |
+| B 站 | CC 字幕**必须登录**才能获取；不登录也能下视频，只是没官方字幕（可手动点「🎙 生成字幕」离线转写） |
 | YouTube | 解锁 "not a bot" 拦截 + 获取字幕 |
 | Twitter/X、Instagram 等有登录墙的站 | 不登录看不到内容 |
 

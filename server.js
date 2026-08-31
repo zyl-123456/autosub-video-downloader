@@ -29,6 +29,16 @@ const FIX_SCRIPT = path.join(BASE, 'fix-ytdlp.js');
 const YTDL_MIN_SIZE = 1024 * 1024;   // 小于 1MB 一律判定为启动器桩
 const ytdlpHealth = { ok: true, checking: false, message: '' };
 
+// 可选配置：读项目目录 config.json（没有就用默认值）
+const CFG = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(BASE, 'config.json'), 'utf8')); }
+  catch (e) { return {}; }
+})();
+// 下载完成后是否"自动"离线转写。默认关闭——whisper large-v3 很吃 CPU/GPU，
+// 会让电脑卡顿；需要字幕时建议在前端点"🎙 生成字幕"手动触发，或在 config.json
+// 里设 "autoTranscribe": true 开启自动转写（仍会跳过已有中文字幕的视频）
+const AUTO_TRANSCRIBE = CFG.autoTranscribe === true;
+
 // 简易任务表：id -> {url, proc, status, percent, ...}
 const tasks = new Map();
 let taskSeq = 0;
@@ -280,12 +290,16 @@ function startDownload(task) {
       if (!task.filename) {
         task.filename = findLatestVideo();
       }
+      // 用 URL 里的视频 ID 在目录里精确定位本次下载的视频（不依赖 task.filename，
+      // 因为重下载已有视频时 filename 可能落到 .vtt 字幕文件上）
+      const vp = resolveVideoByTask(task);
+      // 预算 hasSub，让前端 UI 准确（有中文字幕就不再显示"生成字幕"按钮）
+      task.hasSub = vp ? hasChineseSubForFile(vp) : false;
       saveTaskState(task);
       broadcast(task);
-      // 自动字幕：下载完成后若没有中文字幕，自动触发离线转写（无需手动）
-      // 用 URL 里的视频 ID 在目录里精确定位本次下载的视频，避免误指其他视频
-      const vp = resolveVideoByTask(task);
-      if (vp && !hasSubtitle(vp) && !task.startedAutoSub) {
+      // 自动字幕：仅在开启 AUTO_TRANSCRIBE 且确实没有中文字幕时才触发离线转写
+      // （默认关闭：whisper large-v3 很吃资源会卡电脑；需要时手动点"🎙 生成字幕"即可）
+      if (vp && AUTO_TRANSCRIBE && !task.hasSub && !task.startedAutoSub) {
         task.startedAutoSub = true;
         const subTask = {
           id: ++taskSeq, url: task.url, filename: vp,
@@ -318,13 +332,6 @@ function resolveVideoFile(task) {
   const p = path.resolve(BASE, task.filename);
   if (fs.existsSync(p) && /\.(webm|mp4|mkv|flv|mov|m4v|avi)$/i.test(p)) return p;
   return null;
-}
-
-// 判断某视频文件旁边是否已存在 .zh.srt
-function hasSubtitle(videoPath) {
-  if (!videoPath) return false;
-  const base = videoPath.replace(/\.[^.]+$/, '');
-  return fs.existsSync(base + '.zh.srt');
 }
 
 // 从任务找视频文件：优先按 URL 里的 11 位视频 ID 在目录里精确查找本次下载的视频
@@ -365,11 +372,13 @@ function startTranscribe(task) {
     broadcast(task);
     return;
   }
-  if (hasSubtitle(videoPath)) {
+  const existingSub = findChineseSubForFile(videoPath);
+  if (existingSub) {
+    // 已有中文字幕（YouTube 自带 zh-Hans-zh 等），无需再转写
     task.status = 'done';
     task.percent = 100;
     task.filename = videoPath;
-    task.subtitle = videoPath.replace(/\.[^.]+$/, '') + '.zh.srt';
+    task.subtitle = existingSub;
     saveTaskState(task);
     broadcast(task);
     return;
@@ -530,12 +539,15 @@ function isChineseSub(baseName, f) {
   const lang = n.slice(baseName.length + 1).toLowerCase();
   return lang.includes('zh') || lang === 'chi';
 }
-// 给定视频文件路径，扫描同目录下是否有同名中文字幕
-function hasChineseSubForFile(videoPath) {
+// 给定视频文件路径，扫描同目录下是否有同名中文字幕；返回找到的字幕路径（找不到返回 null）
+function findChineseSubForFile(videoPath) {
   const base = path.basename(videoPath).replace(/\.[^.]+$/, '');
   let files = [];
-  try { files = fs.readdirSync(path.dirname(videoPath)); } catch (e) { return false; }
-  return files.some(f => isChineseSub(base, f));
+  try { files = fs.readdirSync(path.dirname(videoPath)); } catch (e) { return null; }
+  return files.find(f => isChineseSub(base, f)) || null;
+}
+function hasChineseSubForFile(videoPath) {
+  return !!findChineseSubForFile(videoPath);
 }
 
 // 把任务状态广播给所有 SSE 连接
@@ -547,9 +559,10 @@ function broadcast(task) {
   }
 }
 function sanitize(t) {
-  // 对已完成视频任务，检测旁边是否已有中文字幕（YouTube 字幕或离线转写产物）
-  let hasSub = false;
-  if (t.filename && /\.(webm|mp4|mkv)$/i.test(t.filename)) {
+  // hasSub：优先用下载完成时预算的值（按视频 ID 定位视频后判定，准确）；
+  // 没有预算值时（如转写任务）再按 filename 兜底
+  let hasSub = (typeof t.hasSub === 'boolean') ? t.hasSub : false;
+  if (typeof t.hasSub !== 'boolean' && t.filename && /\.(webm|mp4|mkv)$/i.test(t.filename)) {
     hasSub = hasChineseSubForFile(t.filename);
   }
   return {
